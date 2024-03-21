@@ -1,7 +1,7 @@
-import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import GUI from 'lil-gui'
+import * as THREE from "three"
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js"
+import GUI from "lil-gui"
 
 /**
  * Base
@@ -10,7 +10,7 @@ import GUI from 'lil-gui'
 const gui = new GUI()
 
 // Canvas
-const canvas = document.querySelector('canvas.webgl')
+const canvas = document.querySelector("canvas.webgl")
 
 // Scene
 const scene = new THREE.Scene()
@@ -25,30 +25,30 @@ const cubeTextureLoader = new THREE.CubeTextureLoader()
 /**
  * Update all materials
  */
-const updateAllMaterials = () =>
-{
-    scene.traverse((child) =>
-    {
-        if(child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial)
-        {
-            child.material.envMapIntensity = 1
-            child.material.needsUpdate = true
-            child.castShadow = true
-            child.receiveShadow = true
-        }
-    })
+const updateAllMaterials = () => {
+  scene.traverse((child) => {
+    if (
+      child instanceof THREE.Mesh &&
+      child.material instanceof THREE.MeshStandardMaterial
+    ) {
+      child.material.envMapIntensity = 1
+      child.material.needsUpdate = true
+      child.castShadow = true
+      child.receiveShadow = true
+    }
+  })
 }
 
 /**
  * Environment map
  */
 const environmentMap = cubeTextureLoader.load([
-    '/textures/environmentMaps/0/px.jpg',
-    '/textures/environmentMaps/0/nx.jpg',
-    '/textures/environmentMaps/0/py.jpg',
-    '/textures/environmentMaps/0/ny.jpg',
-    '/textures/environmentMaps/0/pz.jpg',
-    '/textures/environmentMaps/0/nz.jpg'
+  "/textures/environmentMaps/0/px.jpg",
+  "/textures/environmentMaps/0/nx.jpg",
+  "/textures/environmentMaps/0/py.jpg",
+  "/textures/environmentMaps/0/ny.jpg",
+  "/textures/environmentMaps/0/pz.jpg",
+  "/textures/environmentMaps/0/nz.jpg",
 ])
 
 scene.background = environmentMap
@@ -59,74 +59,177 @@ scene.environment = environmentMap
  */
 
 // Textures
-const mapTexture = textureLoader.load('/models/LeePerrySmith/color.jpg')
+const mapTexture = textureLoader.load("/models/LeePerrySmith/color.jpg")
 mapTexture.colorSpace = THREE.SRGBColorSpace
-const normalTexture = textureLoader.load('/models/LeePerrySmith/normal.jpg')
+const normalTexture = textureLoader.load("/models/LeePerrySmith/normal.jpg")
 
 // Material
-const material = new THREE.MeshStandardMaterial( {
-    map: mapTexture,
-    normalMap: normalTexture
+const material = new THREE.MeshStandardMaterial({
+  map: mapTexture,
+  normalMap: normalTexture,
 })
+
+// create shadow material
+const shadowMaterial = new THREE.MeshDepthMaterial({
+  depthPacking: THREE.RGBADepthPacking,
+})
+
+// create uniforms outside of the onBeforeCompile
+const uniforms = {
+  uTime: { value: 0 },
+}
+
+material.onBeforeCompile = (shader) => {
+  shader.uniforms.uTime = uniforms.uTime
+
+  // add this function before void main
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <common>",
+    `
+        #include <common>
+
+        uniform float uTime;
+
+        mat2 get2dRotateMatrix(float _angle)
+        {
+            return mat2(cos(_angle), - sin(_angle), sin(_angle), cos(_angle));
+        }
+    `
+  )
+
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <begin_vertex>",
+    ` 
+        #include <begin_vertex>
+
+        float angle = sin(position.y + uTime) * 0.9;
+        mat2 rotateMatrix = get2dRotateMatrix(angle);
+
+        transformed.xz = rotateMatrix * transformed.xz;
+    `
+  )
+}
+
+// do same twist to shadow material
+shadowMaterial.onBeforeCompile = (shader) => {
+  shader.uniforms.uTime = uniforms.uTime
+
+  // add this function before void main
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <common>",
+    `
+          #include <common>
+  
+          uniform float uTime;
+  
+          mat2 get2dRotateMatrix(float _angle)
+          {
+              return mat2(cos(_angle), - sin(_angle), sin(_angle), cos(_angle));
+          }
+      `
+  )
+
+  // update normal map
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <beginnormal_vertex>",
+    `
+              #include <beginnormal_vertex>
+      
+              float angle = sin(position.y + uTime) * 0.9;
+              mat2 rotateMatrix = get2dRotateMatrix(angle);
+      
+              objectNormal.xz = rotateMatrix * objectNormal.xz;
+             
+          `
+  )
+
+  // move object position
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <begin_vertex>",
+    ` 
+          #include <begin_vertex>
+          float angle = sin(position.y + uTime) * 0.9;
+          mat2 rotateMatrix = get2dRotateMatrix(angle);
+          transformed.xz = rotateMatrix * transformed.xz;
+      `
+  )
+}
 
 /**
  * Models
  */
-gltfLoader.load(
-    '/models/LeePerrySmith/LeePerrySmith.glb',
-    (gltf) =>
-    {
-        // Model
-        const mesh = gltf.scene.children[0]
-        mesh.rotation.y = Math.PI * 0.5
-        mesh.material = material
-        scene.add(mesh)
+gltfLoader.load("/models/LeePerrySmith/LeePerrySmith.glb", (gltf) => {
+  // Model
+  const mesh = gltf.scene.children[0]
+  mesh.rotation.y = Math.PI * 0.5
+  mesh.material = material
+  // add shadow material
+  mesh.customDepthMaterial = shadowMaterial
+  scene.add(mesh)
 
-        // Update materials
-        updateAllMaterials()
-    }
-)
+  // Update materials
+  updateAllMaterials()
+})
+
+// PLANE
+
+// const plane = new THREE.Mesh(
+//   new THREE.PlaneGeometry(15, 15, 15),
+//   new THREE.MeshStandardMaterial({
+//     color: "#ffffff",
+//     side: THREE.DoubleSide,
+//   })
+// )
+
+// plane.rotation.x = Math.PI
+// plane.position.y = -3
+// plane.position.z = 5
+// scene.add(plane)
 
 /**
  * Lights
  */
-const directionalLight = new THREE.DirectionalLight('#ffffff', 3)
+const directionalLight = new THREE.DirectionalLight("#ffffff", 3)
 directionalLight.castShadow = true
 directionalLight.shadow.mapSize.set(1024, 1024)
 directionalLight.shadow.camera.far = 15
 directionalLight.shadow.normalBias = 0.05
-directionalLight.position.set(0.25, 2, - 2.25)
+directionalLight.position.set(0.25, 2, -2.25)
 scene.add(directionalLight)
 
 /**
  * Sizes
  */
 const sizes = {
-    width: window.innerWidth,
-    height: window.innerHeight
+  width: window.innerWidth,
+  height: window.innerHeight,
 }
 
-window.addEventListener('resize', () =>
-{
-    // Update sizes
-    sizes.width = window.innerWidth
-    sizes.height = window.innerHeight
+window.addEventListener("resize", () => {
+  // Update sizes
+  sizes.width = window.innerWidth
+  sizes.height = window.innerHeight
 
-    // Update camera
-    camera.aspect = sizes.width / sizes.height
-    camera.updateProjectionMatrix()
+  // Update camera
+  camera.aspect = sizes.width / sizes.height
+  camera.updateProjectionMatrix()
 
-    // Update renderer
-    renderer.setSize(sizes.width, sizes.height)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  // Update renderer
+  renderer.setSize(sizes.width, sizes.height)
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 })
 
 /**
  * Camera
  */
 // Base camera
-const camera = new THREE.PerspectiveCamera(75, sizes.width / sizes.height, 0.1, 100)
-camera.position.set(4, 1, - 4)
+const camera = new THREE.PerspectiveCamera(
+  75,
+  sizes.width / sizes.height,
+  0.1,
+  100
+)
+camera.position.set(4, 1, -4)
 scene.add(camera)
 
 // Controls
@@ -137,8 +240,8 @@ controls.enableDamping = true
  * Renderer
  */
 const renderer = new THREE.WebGLRenderer({
-    canvas: canvas,
-    antialias: true
+  canvas: canvas,
+  antialias: true,
 })
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFShadowMap
@@ -152,18 +255,19 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
  */
 const clock = new THREE.Clock()
 
-const tick = () =>
-{
-    const elapsedTime = clock.getElapsedTime()
+const tick = () => {
+  const elapsedTime = clock.getElapsedTime()
 
-    // Update controls
-    controls.update()
+  uniforms.uTime.value = elapsedTime
 
-    // Render
-    renderer.render(scene, camera)
+  // Update controls
+  controls.update()
 
-    // Call tick again on the next frame
-    window.requestAnimationFrame(tick)
+  // Render
+  renderer.render(scene, camera)
+
+  // Call tick again on the next frame
+  window.requestAnimationFrame(tick)
 }
 
 tick()
